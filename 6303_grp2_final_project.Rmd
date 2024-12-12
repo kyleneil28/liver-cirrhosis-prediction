@@ -1,0 +1,842 @@
+---
+title: "Final Project 6303"
+author: "Lokesh K B, Ajay Kanumala, Kyle D'Souza"
+date: "2024-11-30"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r}
+# Importing Required Libraries
+library(dplyr)
+library(caret)
+library(ggplot2)	
+library(reshape2)	
+library(rpart.plot)
+library(car)
+library(pROC)
+
+
+# Suppress all warnings
+options(warn = -1)
+```
+```{r}
+# Reading the data set
+liver_disease <- read.csv('cirrhosis.csv', header = TRUE)
+head(liver_disease, n = 5)
+```
+```{r}
+# Analysis on the dataset
+summary(liver_disease)
+```
+```{r}
+# Null value check
+total_nulls <- sum(is.na(liver_disease))	
+print(total_nulls)
+```
+```{r}
+## Dropping Missing Values
+# Drop rows with missing values from the dataset
+liver_disease_clean <- na.omit(liver_disease)
+
+# Verify that missing values are removed
+summary(liver_disease_clean)
+
+```
+
+```{r}
+## Dropping ID Columns
+# Drop a column by name
+liver_disease_clean <- liver_disease_clean %>% select(-ID)
+head(liver_disease_clean, n = 5)
+```
+
+```{r}
+# Unique Value in our Dependent or Target variable
+unique(liver_disease_clean$Status)
+```
+```{r}
+# Convert No of Days to Years
+liver_disease_clean$N_Months <- round(liver_disease_clean$N_Days / 30)
+
+# Convert Age in days to Years
+liver_disease_clean$Age_in_years <- round(liver_disease_clean$Age / 365)
+
+head(liver_disease_clean)
+```
+```{r}
+liver_disease_clean <- liver_disease_clean %>% select(-N_Days)
+
+liver_disease_clean <- liver_disease_clean %>% select(-Age)
+
+head(liver_disease_clean, n = 5)
+```
+```{r}
+## Feature engineering on the target variables
+# Replacing 'C and CL' with 'not dead' and 'D' with 'dead'
+liver_disease_clean$Status <- ifelse(liver_disease_clean$Status %in% c("C", "CL"), "Alive", "Deceased")
+unique(liver_disease_clean$Status)
+```
+
+
+```{r}
+### Explanatory Data Analysis
+## Checking for normality
+numerical_columns <- sapply(liver_disease_clean, is.numeric)
+numerical_data <- liver_disease_clean[, numerical_columns]
+
+# Loop through each numerical column to create a Q-Q plot
+for (col_name in names(liver_disease_clean)[numerical_columns]) {
+  plot <- ggplot(liver_disease_clean, aes(sample = liver_disease_clean[[col_name]])) +
+    stat_qq() +
+    stat_qq_line() +
+    labs(title = paste("Q-Q Plot of", col_name), 
+         x = "Theoretical Quantiles", y = "Sample Quantiles") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  print(plot)  # Ensure the plot is printed/displayed in the loop
+}
+```
+
+```{r}
+## Plotting for data distribution
+liver_disease_clean$Status <- as.factor(liver_disease_clean$Status)
+
+for (col_name in colnames(numerical_data)) {
+  plot <- ggplot(liver_disease_clean, aes_string(x = "Status", y = col_name, fill = "Status")) +
+    geom_boxplot(outlier.color = "black", outlier.shape = 2) +
+    labs(
+      title = paste("Boxplot of", col_name, "by Class"),
+      x = "Status",
+      y = col_name
+    ) +
+    scale_fill_brewer(palette = "Set3") +
+    theme_minimal() +
+    theme(legend.position = "none")
+  
+  # Print the plot
+  print(plot)
+}
+```
+```{r}
+## Spread of the categorical variables
+# Loop through all columns
+for (col_name in colnames(liver_disease_clean)) {
+  # Check if the column is categorical
+  if (is.factor(liver_disease_clean[[col_name]]) || is.character(liver_disease_clean[[col_name]])) {
+    # Create a bar plot
+    plot <- ggplot(liver_disease_clean, aes_string(x = col_name, fill = col_name)) +
+      geom_bar() +
+      labs(
+        x = col_name,
+        y = "Count",
+        title = paste("Bar Plot of", col_name)
+      ) +
+      theme_minimal() +
+      theme(legend.position = "none", axis.text.x = element_text(angle = 45, hjust = 1))
+    
+    # Print the plot
+    print(plot)
+  }
+}
+```
+```{r}
+library(ggplot2)
+
+# Identify numeric columns
+numerical_columns <- sapply(liver_disease_clean, is.numeric)
+
+# Loop through each numerical column to create histograms
+for (col_name in names(liver_disease_clean)[numerical_columns]) {
+  # Generate the histogram
+  hist_plot <- ggplot(liver_disease_clean, aes(x = .data[[col_name]])) +
+    geom_histogram(binwidth = 10, fill = "lightblue", color = "black", alpha = 0.7) +
+    labs(
+      title = paste("Histogram of", col_name),
+      x = col_name,
+      y = "Frequency"
+    ) +
+    theme_minimal()
+  
+  # Print the plot
+  print(hist_plot)
+}
+```
+```{r}
+# Identify numeric columns
+numerical_columns <- sapply(liver_disease_clean, is.numeric)
+
+# Loop through each numerical column to create histograms
+for (col_name in names(liver_disease_clean)[numerical_columns]) {
+  # Generate the histogram with Status as a fill aesthetic
+  hist_plot <- ggplot(liver_disease_clean, aes(x = .data[[col_name]], fill = Status)) +
+    geom_histogram(binwidth = 10, color = "lightblue", alpha = 0.7, position = "dodge") +
+    labs(
+      title = paste("Histogram of", col_name, "by Status"),
+      x = col_name,
+      y = "Frequency",
+      fill = "Status"
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+  
+  # Print the plot
+  print(hist_plot)
+}
+
+```
+
+```{r}
+## Heat Map
+# Calculate correlation matrix
+cor_matrix <- cor(numerical_data, use = "complete.obs")
+
+
+# Melt the correlation matrix for heatmap
+melted_cor_matrix <- melt(cor_matrix)
+
+# Create the heatmap with values
+ggplot(data = melted_cor_matrix, aes(Var1, Var2, fill = value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(value, 2)), size = 3, color = "black") +  # Add values
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1, 1), space = "Lab", 
+                       name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+                                   size = 12, hjust = 1)) +
+  labs(x = "", y = "", title = "Correlation Heatmap with Values")
+```
+```{r}
+## Top 10 Highly correlated variables
+# Flatten the correlation matrix into a data frame
+cor_pairs <- as.data.frame(as.table(cor_matrix))
+
+# Remove self-correlations (diagonal)
+cor_pairs <- cor_pairs[cor_pairs$Var1 != cor_pairs$Var2, ]
+
+# Sort by absolute correlation value (highest first)
+cor_pairs <- cor_pairs[order(-abs(cor_pairs$Freq)), ]
+
+# Extract the top 10 highly correlated pairs
+top_10_correlations <- head(cor_pairs, 10)
+
+# Print the result
+print(top_10_correlations)
+```
+```{r}
+# Select only numerical predictors
+#numerical_columns <- sapply(liver_disease_clean, is.numeric)
+predictors <- liver_disease_clean[, numerical_columns]
+
+# Fit a linear model without considering the response variable
+dummy_response <- rnorm(nrow(predictors))  # Create a dummy numeric response
+model <- lm(dummy_response ~ ., data = predictors)
+
+# Calculate VIF for each predictor
+vif_values <- vif(model)
+
+# Sort VIF values in descending order
+vif_sorted <- sort(vif_values, decreasing = TRUE)
+
+# Print sorted VIF values
+print(vif_sorted)
+```
+
+```{r}
+## Check for imbalance in the dependent variable
+
+# Calculate the count and percentage for each category in 'Status'
+status_counts <- table(liver_disease_clean$Status)
+status_percentages <- round(100 * status_counts / sum(status_counts), 1)
+
+# Create a data frame with the status counts and percentages
+status_data <- as.data.frame(status_counts)
+colnames(status_data) <- c("Status", "Count")
+status_data$Percentage <- round(100 * status_data$Count / sum(status_data$Count), 1)
+
+# Create a pie chart with percentage labels
+ggplot(status_data, aes(x = "", y = Count, fill = Status)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar(theta = "y") +
+  geom_text(aes(label = paste(Percentage, "%")), 
+            position = position_stack(vjust = 0.5)) +  # Position the text in the center of each slice
+  labs(title = "Pie Chart of Status", x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(axis.text.x = element_blank())
+```
+```{r}
+## Encoding using label encoder
+# Apply label encoding to all character and factor columns
+liver_disease_clean <- liver_disease_clean %>%
+  mutate(across(where(is.character), ~ as.integer(factor(.)))) %>%
+  mutate(across(where(is.factor), ~ as.integer(.)))
+
+head(liver_disease_clean)
+```
+
+
+```{r}
+# Define a function for Standard Scaling (Z-score normalization)
+standard_scaling <- function(x) {
+  mean_x <- mean(x, na.rm = TRUE)
+  sd_x <- sd(x, na.rm = TRUE)
+  return((x - mean_x) / sd_x)
+}
+
+# Apply scaling to only numeric columns
+df_scaled <- liver_disease_clean %>%
+  mutate(across(where(is.numeric) & !all_of("Status"), # Exclude target variable 
+                standard_scaling))
+
+# Print the scaled dataframe
+print(df_scaled)
+```
+
+# ```{r}
+# # Define a function for Robust Scaling
+# robust_scaling <- function(x) {
+#   median_x <- median(x, na.rm = TRUE)
+#   iqr_x <- IQR(x, na.rm = TRUE)
+#   return((x - median_x) / iqr_x)
+# }
+# 
+# # Apply scaling to only numeric columns
+# df_scaled <- liver_disease_clean %>%
+#   mutate(across(where(is.numeric), robust_scaling))
+# 
+# # Print the scaled dataframe
+# print(df_scaled)
+# ```
+
+
+<!-- ```{r} -->
+<!-- ## Scaling the data using min-max scaling -->
+
+<!-- liver_disease_clean[, numerical_columns] <- lapply(liver_disease_clean[, numerical_columns], function(x) { -->
+<!--   (x - min(x)) / (max(x) - min(x)) -->
+<!-- }) -->
+
+<!-- # View the scaled data -->
+<!-- head(liver_disease_clean) -->
+<!-- ``` -->
+
+
+# ```{r}
+# liver_disease_clean$Status <- as.factor(liver_disease_clean$Status)
+# 
+# library(themis)
+# library(recipes)
+# 
+# rec <- recipe(Status ~ ., data = liver_disease_clean) %>%
+#   step_smote(Status, over_ratio = 1)  # Balance classes 1:1
+# 
+# # Prepare and extract balanced data
+# # not skipping the step for balancing
+# #balanced_data <- prep(rec) %>% juice()
+# 
+# balanced_data <- liver_disease_clean
+# 
+# # Check the new class distribution
+# table(balanced_data$Status)
+# ```
+
+
+```{r}
+df_scaled$Status <- as.factor(df_scaled$Status)
+
+library(themis)
+library(recipes)
+
+rec <- recipe(Status ~ ., data = df_scaled) %>%
+  step_smote(Status, over_ratio = 1)  # Balance classes 1:1
+
+# Prepare and extract balanced data
+
+# Skipping the step for balancing
+#balanced_data <- prep(rec) %>% juice()
+
+balanced_data <- df_scaled
+
+# Check the new class distribution
+table(balanced_data$Status)
+```
+
+```{r}
+# balanced_data partition train:test = 80:20 ratio 
+set.seed(33)
+trainIndex <- createDataPartition(balanced_data$Status, p = 0.80, list = FALSE)	
+# 80% training data	
+train.data <- balanced_data[trainIndex, ]
+dim(train.data)
+# 20% testing data	
+test.data <- balanced_data[-trainIndex, ]	
+dim(test.data)
+```
+```{r}
+#### MODEL BUILDING
+
+# 1. Decision tree using Gini Index
+tree_gini_model <- rpart(Status ~ ., data = train.data, method = "class", parms = list(split = "gini"))
+
+# Plotting the decision tree with Gini Index
+rpart.plot(tree_gini_model, main = "Decision Tree (Gini Index)", type 
+= 2)
+
+```
+
+```{r}
+# Ensure 'Status' is a factor
+train.data$Status <- factor(train.data$Status)
+
+# Make predictions using the decision tree model
+predictions_gini_Train <- predict(tree_gini_model, train.data, type = "class")
+
+# Ensure 'predictions_gini' is a factor with the same levels as the actual 'Status'
+predictions_gini_Train <- factor(predictions_gini_Train, levels = levels(train.data$Status))
+
+# Now, calculate the confusion matrix
+conf_matrix_gini_Train <- confusionMatrix(predictions_gini_Train, train.data$Status)
+
+# Print confusion matrix
+print(conf_matrix_gini_Train)
+
+# Extract precision and recall
+precision <- conf_matrix_gini_Train$byClass["Precision"]
+recall <- conf_matrix_gini_Train$byClass["Recall"]
+
+# Print the metrics
+cat("Precision:", precision, "\n")
+cat("Recall   :", recall, "\n")
+
+```
+
+```{r}
+# Ensure 'Status' is a factor
+test.data$Status <- factor(test.data$Status)
+
+# Make predictions using the decision tree model
+predictions_gini_Test <- predict(tree_gini_model, test.data, type = "class")
+
+# Ensure 'predictions_gini' is a factor with the same levels as the actual 'Status'
+predictions_gini_Test <- factor(predictions_gini_Test, levels = levels(test.data$Status))
+
+# Now, calculate the confusion matrix
+conf_matrix_gini_Test <- confusionMatrix(predictions_gini_Test, test.data$Status)
+
+# Print confusion matrix
+print(conf_matrix_gini_Test)
+
+# Extract precision and recall
+precision <- conf_matrix_gini_Test$byClass["Precision"]
+recall <- conf_matrix_gini_Test$byClass["Recall"]
+
+
+# Print the metrics
+cat("Precision:", precision, "\n")
+cat("Recall   :", recall, "\n")
+```
+
+
+
+# ```{r}
+# # Convert confusion matrix to a data frame
+# conf_matrix_Train <- as.data.frame(as.table(conf_matrix_gini_Train))
+# 
+# # Rename columns for clarity
+# colnames(conf_matrix_Train) <- c("Predicted", "Actual", "Count")
+# 
+# # Plot the heatmap
+# ggplot(data = conf_matrix_Train, aes(x = Predicted, y = Actual, fill = Count)) + 
+#   geom_tile(color = "white") +
+#   geom_text(aes(label = Count), color = "black") +
+#   scale_fill_gradient(low = "white", high = "lightblue", 
+#                       limits = c(min(conf_matrix_Train$Count), max(conf_matrix_Train$Count)),
+#                       breaks = seq(min(conf_matrix_Train$Count), max(conf_matrix_Train$Count), length.out = 5)) +
+#   theme_minimal() + 
+#   labs(x = "Predicted", y = "Actual", title = "Confusion Matrix Heatmap")
+# ```
+
+
+```{r}
+# Convert confusion matrix to a data frame
+conf_matrix_Test <- as.data.frame(as.table(conf_matrix_gini_Test))
+
+# Rename columns for clarity
+colnames(conf_matrix_Test) <- c("Predicted", "Actual", "Count")
+
+# Plot the heatmap
+ggplot(data = conf_matrix_Test, aes(x = Predicted, y = Actual, fill = Count)) + 
+  geom_tile(color = "white") +
+  geom_text(aes(label = Count), color = "black") +
+  scale_fill_gradient(low = "white", high = "lightblue", 
+                      limits = c(min(conf_matrix_Test$Count), max(conf_matrix_Test$Count)),
+                      breaks = seq(min(conf_matrix_Test$Count), max(conf_matrix_Test$Count), length.out = 5)) +
+  theme_minimal() + 
+  labs(x = "Predicted", y = "Actual", title = "Confusion Matrix Heatmap")
+```
+
+
+```{r}
+# Generate predicted probabilities for ROC (class probabilities)
+probabilities_gini_Test <- predict(tree_gini_model, test.data, type = "prob")
+
+# ROC curve for class 1 (Dead/Alive classification)
+roc_curve_gini_Test <- roc(test.data$Status, probabilities_gini_Test[, 2])
+
+# Plot ROC curve
+plot(roc_curve_gini_Test)
+
+# AUC value
+auc_value_gini_Test <- auc(roc_curve_gini_Test)
+print(paste("AUC:", round(auc_value_gini_Test, 2)))
+```
+```{r}
+library(rpart.plot)
+
+# Visualization of Decision Tree Model - Gini
+prp(tree_gini_Test, box.palette = "Reds", tweak = 1.2, varlen = 20)	
+```
+
+# ```{r}
+# # 1. Decision tree using Gini Index
+# tree_gini_Test <- rpart(Status ~ ., data = test.data, method = "class", parms = list(split = "gini"))
+# 
+# # Plotting the decision tree with Gini Index
+# rpart.plot(tree_gini_Test, main = "Decision Tree (Gini Index)", type = 4, extra = 101)
+# ```
+
+
+```{r}
+library(ggplot2)
+
+# Calculate variable importance
+importance <- varImp(tree_gini_model)
+
+# Convert importance data to a data frame
+importance_df <- as.data.frame(importance)
+
+# Add the column names as a new column
+importance_df$col_name <- rownames(importance_df)
+
+# Reset row names (if necessary)
+rownames(importance_df) <- NULL
+
+# Sort by the importance value in descending order
+importance_df <- importance_df[order(-importance_df$Overall), ]
+
+# Take the top 8 most important variables
+importance_df_top8 <- head(importance_df, 8)
+
+# Plot using ggplot2
+ggplot(importance_df_top8, aes(x = Overall, y = reorder(col_name, Overall), fill = Overall)) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_gradient2(low = "lightblue",high = "lightblue", midpoint = 0) + 
+  labs(x = "Importance Score", y = "Variable", title = "Variable Importance - CART (Gini Index)") + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+```{r}
+
+ # 2. Decision Tree C5.0 using Gain Ratio
+
+library(C50)
+
+# Fit the C5.0 model with a minimum number of cases per node
+C50_model_pruned <- C5.0(Status ~ ., data = train.data, control = C5.0Control(minCases =19))
+
+# Print the summary of the pruned model
+summary(C50_model_pruned)
+
+# Plot the pruned tree
+plot(C50_model_pruned)
+```
+
+
+```{r}
+# Train data evaluation
+
+# Ensure 'Status' is a factor
+train.data$Status <- factor(train.data$Status)
+
+# Make predictions using the decision tree model
+predictions_gain <- predict(C50_model_pruned, train.data, type = "class")
+
+# Ensure 'predictions_gain' is a factor with the same levels as the actual 'Status'
+predictions_gain <- factor(predictions_gain, levels = levels(train.data$Status))
+
+conf_matrix_gain_Train <- confusionMatrix(predictions_gain, train.data$Status)
+  
+# Print confusion matrix
+print(conf_matrix_gain_Train)
+
+# Extract precision and recall
+precision <- conf_matrix_gain_Train$byClass["Precision"]
+recall <- conf_matrix_gain_Train$byClass["Recall"]
+
+
+# Print the metrics
+cat("Precision:", precision, "\n")
+cat("Recall   :", recall, "\n")
+```
+
+```{r}
+# Evaluation on Test data
+
+# Ensure 'Status' is a factor
+test.data$Status <- factor(test.data$Status)
+
+# Make predictions using the decision tree model
+predictions_gain_test <- predict(C50_model_pruned, test.data, type = "class")
+
+# Ensure 'predictions_gain' is a factor with the same levels as the actual 'Status'
+predictions_gain_test <- factor(predictions_gain_test, levels = levels(test.data$Status))
+
+conf_matrix_gain_test <- confusionMatrix(predictions_gain_test, test.data$Status)
+  
+# Print confusion matrix
+print(conf_matrix_gain_test)
+
+# Extract precision and recall
+precision <- conf_matrix_gain_test$byClass["Precision"]
+recall <- conf_matrix_gain_test$byClass["Recall"]
+
+
+# Print the metrics
+cat("Precision:", precision, "\n")
+cat("Recall   :", recall, "\n")
+```
+
+```{r}
+# Convert confusion matrix to a data frame
+conf_matrix_gain_test <- as.data.frame(as.table(conf_matrix_gain_test))
+
+# Rename columns for clarity
+colnames(conf_matrix_gain_test) <- c("Predicted", "Actual", "Count")
+
+# Plot the heatmap
+ggplot(data = conf_matrix_gain_test, aes(x = Predicted, y = Actual, fill = Count)) + 
+  geom_tile(color = "white") +
+  geom_text(aes(label = Count), color = "black") +
+  scale_fill_gradient(low = "white", high = "lightblue", 
+                      limits = c(min(conf_matrix_gain_test$Count), max(conf_matrix_gain_test$Count)),
+                      breaks = seq(min(conf_matrix_gain_test$Count), max(conf_matrix_gain_test$Count), length.out = 5)) +
+  theme_minimal() + 
+  labs(x = "Predicted", y = "Actual", title = "Confusion Matrix Heatmap")
+```
+
+```{r}
+# Generate predicted probabilities for ROC (class probabilities)
+probabilities_gain_Test <- predict(C50_model_pruned, test.data, type = "prob")
+
+# ROC curve for class 1 (Dead/Alive classification)
+roc_curve_gain_Test <- roc(test.data$Status, probabilities_gain_Test[, 2])
+
+# Plot ROC curve
+plot(roc_curve_gain_Test)
+
+# AUC value
+auc_value_gain_Test <- auc(roc_curve_gain_Test)
+print(paste("AUC:", round(auc_value_gain_Test, 2)))
+```
+
+```{r}
+library(ggplot2)
+
+# Calculate variable importance
+importance <- varImp(C50_model_pruned)
+
+# Convert importance data to a data frame
+importance_df <- as.data.frame(importance)
+
+# Add the column names as a new column
+importance_df$col_name <- rownames(importance_df)
+
+# Reset row names (if necessary)
+rownames(importance_df) <- NULL
+
+# Sort by the importance value in descending order
+importance_df <- importance_df[order(-importance_df$Overall), ]
+
+# Take the top 8 most important variables
+importance_df_top8 <- head(importance_df, 8)
+
+# Plot using ggplot2
+ggplot(importance_df_top8, aes(x = Overall, y = reorder(col_name, Overall), fill = Overall)) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_gradient2(low = "lightblue",high = "lightblue", midpoint = 0) + 
+  labs(x = "Importance Score", y = "Variable", title = "Variable Importance - C5.0 (Gain Ratio)") + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+
+```{r}
+# Plot using ggplot2
+ggplot(importance_df_top8, aes(x = Overall, y = reorder(col_name, Overall), fill = Overall)) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_gradient2(low = "lightblue",high = "lightblue", midpoint = 0) + 
+  labs(x = "Importance Score", y = "Variable", title = "Variable Importance - C5.0 (Gain Ratio)") + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+
+```{r}
+### 3. Decision Tree ID3 - building and model plot
+
+# Decision tree using Information Gain
+tree_gain_ratio <- rpart(Status ~ ., data = train.data, method = 
+"class", parms = list(split = "information"))
+
+# Plotting the decision tree with Gain Ratio
+rpart.plot(tree_gain_ratio, main = "Decision Tree (Information Gain)", type 
+= 4, extra = 101)	
+```
+
+
+```{r}
+# Ensure 'Status' is a factor
+balanced_data$Status <- factor(balanced_data$Status)
+
+# Make predictions using the decision tree model
+predictions_gain <- predict(tree_gain_ratio, balanced_data, type = "class")
+
+# Ensure 'predictions_gain' is a factor with the same levels as the actual 'Status'
+predictions_gain <- factor(predictions_gain, levels = levels(balanced_data$Status))
+
+conf_matrix_gain <- confusionMatrix(predictions_gain, balanced_data$Status)
+  
+# Print confusion matrix
+print(conf_matrix_gain)
+```
+```{r}
+# Convert confusion matrix to a data frame
+conf_matrix_df1 <- as.data.frame(as.table(conf_matrix_gain))
+
+# Rename columns for clarity
+colnames(conf_matrix_df1) <- c("Predicted", "Actual", "Count")
+
+# Plot the heatmap
+ggplot(data = conf_matrix_df1, aes(x = Predicted, y = Actual, fill = Count)) + 
+  geom_tile(color = "white") +
+  geom_text(aes(label = Count), color = "black") +
+  scale_fill_gradient(low = "white", high = "lightblue", 
+                      limits = c(min(conf_matrix_df1$Count), max(conf_matrix_df1$Count)),
+                      breaks = seq(min(conf_matrix_df1$Count), max(conf_matrix_df1$Count), length.out = 5)) +
+  theme_minimal() + 
+  labs(x = "Predicted", y = "Actual", title = "Confusion Matrix Heatmap")
+```
+```{r}
+# Generate predicted probabilities for ROC (class probabilities)
+probabilities_gain <- predict(tree_gain_ratio, balanced_data, type = "prob")
+
+# ROC curve for class 1 (Dead/Alive classification)
+roc_curve_gain <- roc(balanced_data$Status, probabilities_gain[, 2])
+
+# Plot ROC curve
+plot(roc_curve_gain)
+
+# AUC value
+auc_value_gain <- auc(roc_curve_gain)
+print(paste("AUC:", round(auc_value_gain, 2)))
+```
+```{r}
+# Visualization of Decision Tree Model - Information Gain
+prp(tree_gain_ratio, box.palette = "Reds", tweak = 1.2, varlen = 20)
+```
+```{r}
+# Decision tree using Gain Ratio
+tree_gain_ratio_Test <- rpart(Status ~ ., data = test.data, method = 
+"class", parms = list(split = "information"))
+
+# Plotting the decision tree with Gain Ratio
+rpart.plot(tree_gain_ratio_Test, main = "Decision Tree (Gain Ratio)", type = 4, extra = 101)	
+```
+```{r}
+# Ensure 'Status' is a factor
+balanced_data$Status <- factor(balanced_data$Status)
+
+# Make predictions using the decision tree model
+predictions_gain_Test <- predict(tree_gain_ratio_Test, balanced_data, type = "class")
+
+# Ensure 'predictions_gain' is a factor with the same levels as the actual 'Status'
+predictions_gain_Test <- factor(predictions_gain_Test, levels = levels(balanced_data$Status))
+
+conf_matrix_gain_Test <- confusionMatrix(predictions_gain_Test, balanced_data$Status)
+  
+# Print confusion matrix
+print(conf_matrix_gain_Test)
+```
+```{r}
+# Convert confusion matrix to a data frame
+conf_matrix_Test_df <- as.data.frame(as.table(conf_matrix_gain_Test))
+
+# Rename columns for clarity
+colnames(conf_matrix_Test_df) <- c("Predicted", "Actual", "Count")
+
+# Plot the heatmap
+ggplot(data = conf_matrix_Test_df, aes(x = Predicted, y = Actual, fill = Count)) + 
+  geom_tile(color = "white") +
+  geom_text(aes(label = Count), color = "black") +
+  scale_fill_gradient(low = "white", high = "lightblue", 
+                      limits = c(min(conf_matrix_Test_df$Count), max(conf_matrix_Test_df$Count)),
+                      breaks = seq(min(conf_matrix_Test_df$Count), max(conf_matrix_Test_df$Count), length.out = 5)) +
+  theme_minimal() + 
+  labs(x = "Predicted", y = "Actual", title = "Confusion Matrix Heatmap")
+```
+```{r}
+# Generate predicted probabilities for ROC (class probabilities)
+probabilities_gain_Test_DF <- predict(tree_gain_ratio_Test, balanced_data, type = "prob")
+
+# ROC curve for class 1 (Dead/Alive classification)
+roc_curve_gain_Test <- roc(balanced_data$Status, probabilities_gain_Test_DF[, 2])
+
+# Plot ROC curve
+plot(roc_curve_gain_Test)
+
+# AUC value
+auc_value_gain_Test <- auc(roc_curve_gain_Test)
+print(paste("AUC:", round(auc_value_gain_Test, 2)))
+```
+```{r}
+# Visualization of Decision Tree Model - Gini
+prp(tree_gain_ratio_Test, box.palette = "Reds", tweak = 1.2, varlen = 20)
+```
+
+```{r}
+# Calculate variable importance
+importance <- varImp(tree_gain_ratio)
+
+# Convert importance data to a data frame
+importance_df <- as.data.frame(importance)
+
+# Add the column names as a new column
+importance_df$col_name <- rownames(importance_df)
+
+# Reset row names (if necessary)
+rownames(importance_df) <- NULL
+
+# Sort by the importance value in descending order
+importance_df <- importance_df[order(-importance_df$Overall), ]
+
+# Take the top 8 most important variables
+importance_df_top8 <- head(importance_df, 8)
+
+# Plot using ggplot2
+ggplot(importance_df_top8, aes(x = Overall, y = reorder(col_name, Overall), fill = Overall)) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_gradient2(low = "lightblue",high = "lightblue", midpoint = 0) + 
+  labs(x = "Importance Score", y = "Variable", title = "Variable Importance - Gain Ratio") + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+
+
+
